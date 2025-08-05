@@ -4,6 +4,7 @@ import 'dotenv/config'
 import cookieParser from "cookie-parser"
 import connectDB from "./config/mongodb.js";
 import authRouter from "./routes/authRoutes.js";
+import userRouter from "./routes/userRoutes.js";
 
 
 const app=express();
@@ -11,12 +12,13 @@ const app=express();
 const port =process.env.PORT || 4000;
 //midlewares
 connectDB()
-
+const allowOrigins=["http://localhost:5173"]
 app.use(express.json());  // to parse all request
 app.use(express.urlencoded({extended:true}))
 app.use(cookieParser())
 app.use(cors(
     {
+        origin:allowOrigins,
         credentials:true
     }
 ))
@@ -26,6 +28,8 @@ app.get('/',(req,res)=>{
 })
 
 app.use('/api/auth',authRouter)
+app.use('/api/user',userRouter)
+
 
 
 
