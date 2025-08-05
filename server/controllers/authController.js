@@ -1,7 +1,7 @@
 import userModel from "../models/userModels.js"
 import bcrypt from 'bcryptjs'  //for encrypting
 import jwt from 'jsonwebtoken'
-import trasnporter from "../config/nodemailer.js";
+import transporter from "../config/nodemailer.js";
 
 
 export const register = async (req, res) => {
@@ -55,7 +55,7 @@ try {
     text: `Welcome to our website. Your account has been created with email id ${email}`,
   };
 
-  const info = await trasnporter.sendMail(mailOptions);
+  const info = await transporter.sendMail(mailOptions);
   console.log("✅ Email sent successfully. Message ID:", info.messageId);
 } 
 catch (emailErr) {
@@ -184,54 +184,257 @@ export const logout= async(req,res)=>{
 
 }
 //send verification Otp
-export const sendVerifyOtp=async(req,res)=>{
-  try{
-    const {userId}=req.body;
-    const user=await userModel.findById(userId);
+export const sendVerifyOtp = async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    const user = await userModel.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    if (user.isAccountVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account already verified',
+      });
+    }
+
+    // Generate 6-digit OTP
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+
+    user.verifyOtp = otp;
+    user.verifyOtpExpiredAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+    await user.save();
+
+    const mailOptions = {
+      from: `"sanskar" <${process.env.SENDER_EMAIL}>`,
+      to: user.email,
+      subject: 'Account Verification OTP',
+      text: `Your OTP is ${otp}. It will expire in 24 hours. Use it to verify your account.`,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.json({
+      success: true,
+      message: 'OTP sent successfully',
+    });
+
+  } catch (error) {
+    console.error("OTP Send Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// verify email using otp
+export const verifyEmail = async (req, res) => {
+  const { otp } = req.body;
+  const userId = req.body.userId; // added by userAuth
+
+  if (!userId || !otp) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing details',
+    });
+  }
+
+  try {
+    const user = await userModel.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    if (!user.verifyOtp || user.verifyOtp !== otp) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid OTP',
+      });
+    }
+
+    if (user.verifyOtpExpiredAt < Date.now()) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP expired',
+      });
+    }
+
+    user.isAccountVerified = true;
+    user.verifyOtp = '';
+    user.verifyOtpExpiredAt = null;
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: 'Account verified successfully',
+    });
+
+  } catch (error) {
+    console.error("Verify Email Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 
 
-    if(user.isAccountVerified){
+
+//to check if user is authenicated
+export const isAuthenticated=async(req,res)=>{
+  try {
+    //for authtehnication we will use midleware
+    return res.json(
+      {
+        success:true,
+        message:'User is authenticated'
+      }
+    )
+    
+  } catch (error) {
+      res.json(
+        {
+          success:false,
+          message:error.message
+        }
+      )
+      
+    
+  }
+
+}
+
+//send password reset otp
+
+export const sendResetOtp=async(req,res)=>{
+  const {email}=req.body
+  if(!email){
+    return res.json(
+      {
+        success:false,
+        message:'Email Is Required'
+      }
+    )
+  }
+  try {
+    const user=await userModel.findOne({email})
+    if(!user){
       return res.json(
         {
           success:false,
-          message:'Account already verified'
+          message:'User not found'
         }
       )
-
     }
-    //using mathrandom to generateotp 6 digit
     const otp=String(Math.floor(100000+Math.random()*900000))
-    
-    user.verifyOtp=otp;
-    user.verifyOtpExpiredAt=Date.now()+24*60*60*1000;
-    await user.save();
+    user.resetOtp=otp
+    user.resetOtpExpiredAt=Date.now()+15*60*1000
+    await user.save()
 
     const mailOptions={
-      from: `"sanskar" <${process.env.SENDER_EMAIL}>`,
-
-      to: user.email,
-      subject: 'Account Verification Otp ',
-      text: `Your otp is {otp}. Verify yournaccount using it :)`,
+      from:`"sanskar"<${process.env.SENDER_EMAIL}>`,
+      to:user.email,
+      subject:'Password Reset OTP',
+      text:`Your OTP is ${otp}. Use it to reset your password.`,
     }
 
-    await trasnporter.sendMail(mailOptions)
-    
+    await transporter.sendMail(mailOptions)
 
-    res.json(
+    return res.json(
       {
         success:true,
-        message:'Otp sent successfully'
+        message:'OTP sent successfully'
       }
     )
 
 
-
-  }catch(error){
+  }
+  catch (error) {
     return res.json(
       {
         success:false,
         message:error.message
-      })
-    }
+      }
+    )
+    
+  }
+
+
+
 }
 
+//verify the otp and reset the user password
+export const resetPassword=async(req,res)=>{
+  const {email,otp,newPassword}=req.body
+  if(!email || !otp || !newPassword){
+    return res.json(
+      {
+        success:false,
+        message:'Missing details'
+      }
+    )
+  }
+  try {
+    const user=await userModel.findOne({email})
+    if(!user){
+      return res.json(
+        {
+          success:false,
+          message:'User not found'
+        }
+      )
+    }
+    if(user.resetOtp!==otp||user.resetOtp===""){
+      return res.json(
+        {
+          success:false,
+          message:'Invalid OTP'
+        }
+      )
+    }
+    if(user.resetOtpExpiredAt<Date.now()){
+      return res.json(
+        {
+          success:false,
+          message:'OTP expired'
+        }
+      )
+    }
+    //hash the new password and update in db
+    const hashedPassword=await bcrypt.hash(newPassword,10)
+    user.password=hashedPassword
+    user.resetOtp=''
+    user.resetOtpExpiredAt=0
+    await user.save()
+
+    return res.json(
+      {
+        success:true,
+        message:'Password reset successfully'
+      }
+    )
+
+    
+
+
+
+}catch (error) {  
+  return res.json(
+    {
+      success:false,
+      message:error.message
+    }
+  )
+}
+}
